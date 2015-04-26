@@ -25,6 +25,9 @@
 \*---------------------------------------------------*/
 
 // RFM98W FSK
+const int Fifoaddm1 = 62;
+const int Fifoaddlast = 63;
+const int Fifosize = 64;
 int _slaveSelectPin = 39; 
 int dio0 = 15;
 int dio3 = 18;
@@ -35,7 +38,7 @@ int CurrentCount = 0, Bytes, state;
 byte currentMode = 0x09;
 byte testmode;
 //int validpreamble;
-unsigned char Message[256] = {0};
+unsigned char Message[Fifosize] = {0};
 int Payload_Count = 0, Payload_Fail_Count = 0;
 int usethis = 0, used = 0;
 int Image_Packet_Count_new = 0, Image_Packet_Count_curr = 0;
@@ -96,7 +99,14 @@ unsigned long UpdateRSSIAt=0;
 #define REG_PREAMBLELSB				0x26 	//0x64 send 100 preamble
 #define REG_SYNCCONFIG				0x27	//0x18 00011000
 #define REG_SYNCVALUE1				0x28	//0x48
-#define REG_PACKETCONFIG1			0x30	//0x10 00000000 00010000
+#define REG_SYNCVALUE2				0x29	
+#define REG_SYNCVALUE3				0x2A
+#define REG_SYNCVALUE4				0x2B	
+#define REG_SYNCVALUE5				0x2C
+#define REG_SYNCVALUE6				0x2D	
+#define REG_SYNCVALUE7				0x2E
+#define REG_SYNCVALUE8				0x2F
+#define REG_PACKETCONFIG1			0x30	//0x10 00000000 01010000 
 #define REG_PACKETCONFIG2			0x31	//0x40 01000-000//111
 #define REG_PAYLOADLENGTH			0x32	//change to 7FF - 2047 bytes
 #define REG_FIFOTHRESH				0x35	//dont need
@@ -126,6 +136,10 @@ unsigned long UpdateRSSIAt=0;
 #define RFM98_MODE_FSRX				0x0C	//00001100
 #define RFM98_MODE_RX				0x0D	//00001101
 
+
+
+
+
 unsigned long compMessage[32] = {	0xAB,0xCD,0xEF,0x12, //4 bytes = 1 word
 									0x34,0x56,0x78,0x9A,
 									0xBC,0xDE,0xF1,0x23,
@@ -137,7 +151,7 @@ unsigned long compMessage[32] = {	0xAB,0xCD,0xEF,0x12, //4 bytes = 1 word
 
 void setup()
 {
-  Serial.begin(57600);
+  Serial.begin(115200);
   initialiseSD();
   Serial.println();
   Serial.println(F("Groundstation Initializing.."));
@@ -172,7 +186,17 @@ byte readRegister(byte addr)
   unselect();
   return regval;
 }
+byte readFifoRegister(byte addr) //smoother access
+{
+  Serial.print(F("I am reading this Fifo "));
+  Serial.print(addr);
+  SPI.transfer(addr & 0x7F);
+  byte regval = SPI.transfer(0x00);
+  Serial.print(F(" and i am receiving this Fifo "));
+  Serial.println(regval);
 
+  return regval;
+}
 void writeRegister(byte addr, byte value)
 {
   select();
@@ -205,6 +229,7 @@ void setRFM98W(void)
   pinMode(dio5, INPUT);
   //setInterrupts();
   SPI.begin();
+  SPI.setClockDivider(SPI_CLOCK_DIV2); //8Mhz Clk
   SetFSKMod();
   //testCommunication();
   Receiver_Startup();
@@ -213,9 +238,6 @@ void setRFM98W(void)
 void initialiseSD(void) {
 	while (!Serial) delay(25);
 	Serial.print(F("Initializing SD card..."));
-
-	//pinMode(53, OUTPUT);
-	//pinMode(8, OUTPUT);
 	if (!SD.begin(8)) {//8
 		Serial.println(F("initialization failed!"));
 		return;
@@ -249,10 +271,10 @@ void SetFSKMod()
   writeRegister(0x07, 0x9C);
   writeRegister(0x08, 0xCC);
   */
-  writeRegister(REG_BITRATEMSB, 0x68); //0x00
-  writeRegister(REG_BITRATELSB, 0x2B); //0x6B
-  writeRegister(REG_FDEVMSB, 0x00); //2547*61.5*2 ~ 300khz
-  writeRegister(REG_FDEVLSB, 0x31);// 1B
+  writeRegister(REG_BITRATEMSB, 0x01); //0x00
+  writeRegister(REG_BITRATELSB, 0x40); //0x6B
+  writeRegister(REG_FDEVMSB, 0x0B); //2547*61.5*2 ~ 300khz
+  writeRegister(REG_FDEVLSB, 0x85);// 1B
   writeRegister(REG_FRFMSB, 0x6C); //exact at 433Mhz
   writeRegister(REG_FRFMID, 0x9C);
   writeRegister(REG_FRFLSB, 0x8E);
@@ -324,19 +346,26 @@ void Receiver_Startup()
   writeRegister(REG_RSSICONFIG, 0x03);
   writeRegister(REG_RSSICOLLISION, 0x0A);  
   writeRegister(REG_RSSITHRESH, 0xFF); //C8
-  writeRegister(REG_RXBW, 0x17); //11 00000011
+  writeRegister(REG_RXBW, 0x01); //11 00000011
   //writeRegister(REG_AFCFEI, 0x00);
   writeRegister(REG_PREAMBLEDETECT, 0xC4);
   writeRegister(REG_RXTIMEOUT1, 0x00);
   writeRegister(REG_RXTIMEOUT2, 0x00);
   writeRegister(REG_RXTIMEOUT3, 0x00); 
   writeRegister(REG_OSC, 0x07); //@standby Clkout turned off
-  
+
   writeRegister(REG_PREAMBLEMSB, 0x00);
   writeRegister(REG_PREAMBLELSB, 0x64);
-  writeRegister(REG_SYNCCONFIG, 0x18);
-  writeRegister(REG_SYNCVALUE1, 0x48);
-  writeRegister(REG_PACKETCONFIG1, 0x10);
+  writeRegister(REG_SYNCCONFIG, 0x17);
+  writeRegister(REG_SYNCVALUE1, 0x28);
+  writeRegister(REG_SYNCVALUE2, 0x39);
+  writeRegister(REG_SYNCVALUE3, 0x4A);
+  writeRegister(REG_SYNCVALUE4, 0x5B);
+  writeRegister(REG_SYNCVALUE5, 0x6C);
+  writeRegister(REG_SYNCVALUE6, 0x7D);
+  writeRegister(REG_SYNCVALUE7, 0x8E);
+  writeRegister(REG_SYNCVALUE8, 0x9F);
+  writeRegister(REG_PACKETCONFIG1, 0x50);
   writeRegister(REG_PACKETCONFIG2, 0x40);
   writeRegister(REG_PAYLOADLENGTH, 0x40);//FF
   writeRegister(REG_IMAGECAL, 0xC2);
@@ -367,19 +396,20 @@ void CheckRx()
   Serial.print(F("Signal Strength is at ")); 
   Serial.print(-(readRegister(REG_RSSIVALUE))/2);
   Serial.println(F("dBm"));
-  uint8_t x = readRegister(0x3E);
-  uint8_t y = readRegister(0x3F);	
+  uint8_t x = readRegister(REG_IRQFLAGS1);
+  uint8_t y = readRegister(REG_IRQFLAGS2);	
   if ((x & 0x08) == 0x08)
-	writeRegister(0x3E, 0x08);
+	writeRegister(REG_IRQFLAGS1, 0x08);
   //delay(100);
   Serial.print(F("PayloadReady = "));
   //k = digitalRead(dio0);
   Serial.println(digitalRead(dio0));
   Serial.print(F("Fifo Empty = "));
   Serial.println((y & 0x40)==0x40);
-  while ((y & 0x40)!=0x40) {
+  while ((y & 0x40)!=0x40) { //while fifo isnt empty
+	//select();
 	CurrentCount = receiveMessage(Message, CurrentCount);
-	if (CurrentCount == 62) {
+	if (CurrentCount == Fifoaddm1) {
 		if (digitalRead(dio0) == 1) {
 			Payload_Count++;
 			usethis = 1;
@@ -387,11 +417,14 @@ void CheckRx()
 		else {
 			Payload_Fail_Count++;
 			usethis = 0;
-			// Serial.println("MESSAGE IS ");
-			// Serial.println(Message[CurrentCount]);
+
 		}
 	}
-	if (j == 63) {
+	// if ((0x10 & readRegister(REG_IRQFLAGS2)) == 0x10)
+		// writeRegister(REG_IRQFLAGS2, 0x10);
+	// Serial.print("MESSAGE IS ");
+	// Serial.println(Message[CurrentCount-1]);
+	if (j == Fifoaddlast) {
 		j = 0;
 		break;
 	}
@@ -401,6 +434,7 @@ void CheckRx()
 	//Serial.print("PayloadReady = ");
 	//Serial.println(digitalRead(dio0));
   }
+  //unselect();
   Serial.print(F("Fifo Overrun = "));
   Serial.println((y & 0x10)==0x10);
   //if (digitalRead(dio3) == 0) delay(2000); //detect fifo empty
@@ -417,11 +451,11 @@ void CheckRx()
   
   //Serial.println(freeRam());
   
-  if ((usethis == 1) && (Endflag == 0) && ((Message[62] == 0x00) || (Message[62] == 0x01) || (Message[62] == 0x02) || (Message[62] == 0x03) || (Message[62] == 0x04))) {
-	Image_Packet_Count_new = Message[63];
+  if ((usethis == 1) && (Endflag == 0) && ((Message[Fifoaddm1] == 0x00) || (Message[Fifoaddm1] == 0x01) || (Message[Fifoaddm1] == 0x02) || (Message[Fifoaddm1] == 0x03) || (Message[Fifoaddm1] == 0x04) || (Message[Fifoaddm1] == 0x05))) {
+	Image_Packet_Count_new = Message[Fifoaddlast];
 	Serial.println(".....................GOT HERE");
 	
-	if (Image_Packet_Count_curr != Image_Packet_Count_new) //not necessarily increase by 1 due to packet loss
+	if (((Image_Packet_Count_curr != Image_Packet_Count_new) && (Image_Packet_Count_new > Image_Packet_Count_curr)) || ((Image_Packet_Count_curr == 255) )) // && (Image_Packet_Count_new == 0)  not necessarily increase by 1 due to packet loss
 		used = 0;
 	
 	Serial.print(F("used = "));
@@ -435,10 +469,10 @@ void CheckRx()
 		Image_Packet_Count_curr = Image_Packet_Count_new;
 	}
 	else { //if used == 1
-		if (Message[62] == 4) //number of redundancy
+		if (Message[Fifoaddm1] == 5) //number of redundancy + 1
 			used = 0;
-		else if ((Message[0] == 0) && (Message[63] == 0)) {
-			for (int i = 0; i < 63; ++i)
+		else if ((Message[0] == 0) && (Message[Fifoaddlast] == 0)) {
+			for (int i = 0; i < Fifoaddlast; ++i)
 				sum |= Message[i];
 			if (sum == 0)
 				used = 0;
@@ -452,7 +486,7 @@ void CheckRx()
 	}
 	usethis = 0;
 	
-	//if ((CorrectPackets + 255*pseudo_CorrectPackets) != Message[63])
+	//if ((CorrectPackets + 255*pseudo_CorrectPackets) != Message[255])
 	//Serial.println(F("                                 ++++++++++++++++++++++++ERROR IS HERE++++++++++++++++++++++++"));
   }
   Serial.print(F("Image_Packet_Count_new = "));
@@ -460,19 +494,19 @@ void CheckRx()
   Serial.print(F("Image_Packet_Count_curr = "));
   Serial.println(Image_Packet_Count_curr);
   Serial.print(F("CorrectPackets = "));
-  Serial.println(CorrectPackets);
-  Serial.print(F("pseudo_CorrectPackets = "));
-  Serial.println(pseudo_CorrectPackets);
+  Serial.println(CorrectPackets + pseudo_CorrectPackets*256);
+  //Serial.print(F("pseudo_CorrectPackets = "));
+  //Serial.println(pseudo_CorrectPackets);
   Serial.print(F("Packets Lost = "));
-  Serial.println(Image_Packet_Count_new + 1 - pseudo_CorrectPackets*255 - CorrectPackets);
+  Serial.println(Image_Packet_Count_new + 1 - CorrectPackets);
   Serial.print(F("Percentage Lost = "));
-  Serial.println((Image_Packet_Count_new + 1 - pseudo_CorrectPackets*255 - CorrectPackets) / (Image_Packet_Count_new + 1));
+  Serial.println((Image_Packet_Count_new + 1 - CorrectPackets) / (Image_Packet_Count_new + 1) * 100);
   Serial.print(F("Endflag = "));
   Serial.println(Endflag);
-  if (CurrentCount == 64) {
+  if (CurrentCount == Fifosize) {
 	CurrentCount = 0;
   }
-  if (CorrectPackets == 255) {//roughly halfway mark
+  if (CorrectPackets == 256) {//roughly halfway mark
 	pseudo_CorrectPackets += 1;
 	CorrectPackets = 0;
   }
@@ -555,7 +589,7 @@ void CheckRx()
 int receiveEndImagePacket() {
 	int outcome = 0;
 	Serial.println(F("Testing...."));
-	for(int count = 0; count < 63; count++) {
+	for(int count = 0; count < Fifoaddlast; count++) {
 		if (Message[count] == compMessage[count])
 			outcome = 0;
 		else {
@@ -570,7 +604,7 @@ int receiveEndImagePacket() {
 }
 int receiveMessage(unsigned char *message, int i)
 {
-  const int Package = 64;
+  const int Package = Fifosize;
   
   if (i < Package)
 	  message[i] = (unsigned char)readRegister(REG_FIFO);
@@ -597,10 +631,10 @@ void writingtofile() {
 		if (imagedone == 1) //need to end imagedone = 0
 			filecount++;
 	}
-	//write from 0 to 62 cause 63 is my parity bit
+	//write from 0 to 253
 	myFile = SD.open(cstr, FILE_WRITE);
 	if (imagedone == 0) {
-		for(int ii=0; ii<62; ii++) {
+		for(int ii = 0; ii < Fifoaddm1; ii++) {
 			myFile.write(Message[ii]);
 			/*if((Message[ii-1]==0xFF)&&(Message[ii]==0xD9))     //tell if the picture is finished
 			{
